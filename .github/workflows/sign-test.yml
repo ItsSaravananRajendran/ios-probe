@@ -19,8 +19,14 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
       - name: Create self-signed identity + entitlements
         run: |
+          cat > /tmp/ext.cnf <<'X'
+          basicConstraints=CA:FALSE
+          keyUsage=digitalSignature
+          extendedKeyUsage=codeSigning
+          X
           openssl req -x509 -newkey rsa:2048 -nodes -keyout /tmp/key.pem -out /tmp/cert.pem \
-            -days 365 -subj "/CN=CI Probe Signing" 2>/dev/null
+            -days 365 -subj "/CN=CI Probe Signing" -extensions v3 \
+            -config <(printf "[req]\ndistinguished_name=dn\nx509_extensions=v3\n[dn]\n[v3]\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature\nextendedKeyUsage=codeSigning\n") 2>/dev/null
           openssl pkcs12 -export -out /tmp/probe.p12 -inkey /tmp/key.pem -in /tmp/cert.pem \
             -passout pass:ciprobe -legacy 2>/dev/null || \
             openssl pkcs12 -export -out /tmp/probe.p12 -inkey /tmp/key.pem -in /tmp/cert.pem \
@@ -32,6 +38,8 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k ciprobe ~/Library/Keychains/build.keychain-db >/dev/null
           security list-keychains -d user -s ~/Library/Keychains/build.keychain-db
           security default-keychain -s ~/Library/Keychains/build.keychain-db
+          echo "--- identities ---"
+          security find-identity -v -p codesigning
           cat > /tmp/ent.plist <<'PL'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
