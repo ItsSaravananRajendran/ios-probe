@@ -41,9 +41,38 @@ ProbeApp/Sources/           # SwiftUI sources
 
 ## Install paths to the iPhone
 
+### The blocker that is NOT signing: device pairing
+
+The iPhone's `lockdownd` listens on TCP 62078 and **accepts the connection over
+Tailscale**, but it resets the connection the moment a client speaks to it
+without a valid pairing record. Measured directly:
+
+- `nc -z` to `100.89.49.53:62078` -> `succeeded`
+- send a length-prefixed lockdown plist -> `Connection reset by peer`
+- connect and read without sending -> the socket is closed immediately
+
+So the phone is **reachable but not yet paired**. Pairing options, all tested
+from the mac mini:
+
+| Route | Result |
+|---|---|
+| `pymobiledevice3 lockdown pair` (USB) | no USB device attached |
+| `pymobiledevice3 bonjour mobdev2` / `rsd` | `[]` — mDNS does not cross Tailscale |
+| `pymobiledevice3 remote pair` | "No devices were found during bonjour browse" |
+| `pymobiledevice3 remote start-tunnel --native` | "remotepairingd reported no device" (no Apple ID signed into this Mac) |
+| port 58783 (RSD / wireless debug) | connection refused — Developer Mode is off on the phone |
+| port 27015 (usbmux over network) | connection refused |
+
+**To pair the phone from the mac mini, enable Developer Mode on the iPhone**
+(Settings > Privacy & Security > Developer Mode) and turn on
+**Settings > Developer > Connect via Network**. That opens the RSD service and
+lets `pymobiledevice3` establish a tunnel over Tailscale without a USB cable.
+Without it, the only pairing route is a physical USB connection to some Mac.
+
 ### A. TestFlight (recommended — needs the paid Apple Developer Program, $99/yr)
 
-No physical connection to the phone, no Mac in the US.
+No physical connection to the phone, no Mac in the US, and it does **not**
+require Developer Mode.
 
 1. In the Apple Developer portal, create an **App Store Connect API key**
    (Admin → Keys → App Store Connect) and download the `.p8`.
@@ -53,8 +82,14 @@ No physical connection to the phone, no Mac in the US.
 3. Store them as repo secrets:
    `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_PRIVATE_KEY`, `IOS_CERT_P12`,
    `IOS_CERT_PASSWORD`, `IOS_PROFILE`, `IOS_TEAM_ID`.
-4. Run the `Build + TestFlight` workflow. It archives, signs, exports, and
-   uploads with `xcrun altool`.
+   ```bash
+   gh secret set ASC_KEY_ID --repo ItsSaravananRajendran/ios-probe
+   base64 -i cert.p12 | gh secret set IOS_CERT_P12 --repo ItsSaravananRajendran/ios-probe
+   base64 -i profile.mobileprovision | gh secret set IOS_PROFILE --repo ItsSaravananRajendran/ios-probe
+   ```
+4. Run the `Build + TestFlight` workflow. It preflights the secrets (failing
+   fast with the exact missing names), archives, signs, exports, and uploads
+   with `xcrun altool`.
 5. On the iPhone: install the **TestFlight** app from the App Store, accept
    the invitation, install the build. Builds last 90 days.
 
@@ -67,7 +102,7 @@ No physical connection to the phone, no Mac in the US.
   means either SideStore/AltStore, or `pymobiledevice3 apps install` once a
   pairing record exists.
 
-## Install to the iPhone directly (no TestFlight)
+### C. Direct install over Tailscale (after pairing)
 
 `pymobiledevice3` is installed on the mac mini (`~/Library/Python/3.9/bin`).
 
@@ -80,6 +115,9 @@ pymobiledevice3 apps install ./App.ipa        # install a signed .ipa
 The iPhone's `lockdownd` (port 62078) was reachable over Tailscale at
 `100.89.49.53` while the phone was awake. It sleeps, so the phone must be
 unlocked and awake for the install to land.
+
+`tools/probe_transport.py` re-runs the pairing diagnostics above; pass the
+phone's tailnet IP to check the current state.
 
 ## Troubleshooting
 
