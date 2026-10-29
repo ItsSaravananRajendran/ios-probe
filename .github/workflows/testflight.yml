@@ -25,6 +25,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Preflight - verify required secrets are present
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          IOS_CERT_P12: ${{ secrets.IOS_CERT_P12 }}
+          IOS_CERT_PASSWORD: ${{ secrets.IOS_CERT_PASSWORD }}
+          IOS_PROFILE: ${{ secrets.IOS_PROFILE }}
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+        run: |
+          missing=""
+          for v in ASC_KEY_ID ASC_ISSUER_ID ASC_PRIVATE_KEY IOS_CERT_P12 IOS_CERT_PASSWORD IOS_PROFILE IOS_TEAM_ID; do
+            if [ -z "${!v}" ]; then missing="$missing $v"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secrets:$missing"
+            echo "Set them with: gh secret set <NAME> --repo ${{ github.repository }}"
+            exit 1
+          fi
+          echo "all secrets present"
+
       - name: Select Xcode
         run: |
           XC=$(ls -d /Applications/Xcode*.app | grep -vE "\.app\.app" | sort -V | tail -1)
