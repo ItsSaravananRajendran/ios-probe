@@ -7,14 +7,14 @@ on:
 
 jobs:
   build:
-    runs-on: macos-26-arm64
+    runs-on: macos-15-arm64
     steps:
       - uses: actions/checkout@v4
 
       - name: Select Xcode
         run: |
           ls /Applications | grep -E "^Xcode" || true
-          sudo xcode-select -s /Applications/Xcode_27.app
+          sudo xcode-select -s /Applications/Xcode_16.4.app
           xcodebuild -version
 
       - name: Install XcodeGen
