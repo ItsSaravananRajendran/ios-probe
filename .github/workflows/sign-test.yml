@@ -25,10 +25,13 @@ jobs:
             -passout pass:ciprobe -legacy 2>/dev/null || \
             openssl pkcs12 -export -out /tmp/probe.p12 -inkey /tmp/key.pem -in /tmp/cert.pem \
             -passout pass:ciprobe 2>/dev/null
+          security create-keychain -p ciprobe ~/Library/Keychains/build.keychain-db
           security import /tmp/probe.p12 -k ~/Library/Keychains/build.keychain-db \
             -P ciprobe -T /usr/bin/codesign
           security unlock-keychain -p ciprobe ~/Library/Keychains/build.keychain-db
           security set-key-partition-list -S apple-tool:,apple: -s -k ciprobe ~/Library/Keychains/build.keychain-db >/dev/null
+          security list-keychains -d user -s ~/Library/Keychains/build.keychain-db
+          security default-keychain -s ~/Library/Keychains/build.keychain-db
           cat > /tmp/ent.plist <<'PL'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
