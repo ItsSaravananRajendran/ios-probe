@@ -1,0 +1,105 @@
+name: Build + TestFlight
+
+# Publishes a signed build to App Store Connect so it can be installed on a
+# real iPhone via the TestFlight app -- no USB, no Mac next to the phone.
+#
+# Required repository secrets:
+#   ASC_KEY_ID        App Store Connect API key id
+#   ASC_ISSUER_ID     App Store Connect issuer id
+#   ASC_PRIVATE_KEY   Contents of the .p8 API key
+#   IOS_CERT_P12      base64 of the "Apple Distribution" certificate (.p12)
+#   IOS_CERT_PASSWORD password protecting that .p12
+#   IOS_PROFILE       base64 of the .mobileprovision profile
+#   IOS_TEAM_ID       10-char Apple team id
+
+on:
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: macos-15
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          XC=$(ls -d /Applications/Xcode*.app | grep -vE "\.app\.app" | sort -V | tail -1)
+          sudo xcode-select -s "$XC"
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Decode signing payloads
+        env:
+          IOS_CERT_P12: ${{ secrets.IOS_CERT_P12 }}
+          IOS_PROFILE: ${{ secrets.IOS_PROFILE }}
+        run: |
+          echo "$IOS_CERT_P12" | base64 -d > /tmp/ios.p12
+          echo "$IOS_PROFILE" | base64 -d > /tmp/ios.mobileprovision
+          ls -la /tmp/ios.p12 /tmp/ios.mobileprovision
+
+      - name: Import signing material
+        env:
+          IOS_CERT_PASSWORD: ${{ secrets.IOS_CERT_PASSWORD }}
+        run: |
+          security create-keychain -p ci ~/Library/Keychains/ci.keychain-db || true
+          security import /tmp/ios.p12 -k ~/Library/Keychains/ci.keychain-db -P "$IOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security unlock-keychain -p ci ~/Library/Keychains/ci.keychain-db
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci ~/Library/Keychains/ci.keychain-db >/dev/null
+          security list-keychains -d user -s ~/Library/Keychains/ci.keychain-db
+          security default-keychain -s ~/Library/Keychains/ci.keychain-db
+          security find-identity -v -p codesigning
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp /tmp/ios.mobileprovision "$HOME/Library/MobileDevice/Provisioning Profiles/$(uuidgen).mobileprovision"
+          security cms -D -i /tmp/ios.mobileprovision > /tmp/profile.plist
+          /usr/libexec/PlistBuddy -c "Print :Name" /tmp/profile.plist
+          /usr/libexec/PlistBuddy -c "Print :UUID" /tmp/profile.plist
+
+      - name: Archive
+        run: |
+          xcodebuild -project ProbeApp.xcodeproj -scheme ProbeApp -configuration Release -destination 'generic/platform=iOS' -archivePath build/ProbeApp.xcarchive -allowProvisioningUpdates archive
+
+      - name: Write export options
+        run: |
+          mkdir -p ExportOptions
+          cat > ExportOptions/ExportOptions.plist <<'PL'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>teamID</key><string>__TEAM_ID__</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>uploadSymbols</key><true/>
+            <key>destination</key><string>upload</string>
+          </dict>
+          </plist>
+          PL
+          sed -i '' "s/__TEAM_ID__/$IOS_TEAM_ID/" ExportOptions/ExportOptions.plist
+
+      - name: Export IPA
+        run: |
+          xcodebuild -exportArchive -archivePath build/ProbeApp.xcarchive -exportOptionsPlist ExportOptions/ExportOptions.plist -exportPath build/export
+          ls -la build/export
+
+      - name: Upload to App Store Connect
+        env:
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          echo "$ASC_PRIVATE_KEY" > /tmp/AuthKey.p8
+          IPA=$(find build/export -name "*.ipa" | head -1)
+          xcrun altool --upload-app -f "$IPA" --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" --type ios --verbose
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: exported-ipa
+          path: build/export
