@@ -1,0 +1,7 @@
+name: Validate
+on: workflow_dispatch
+jobs:
+  v:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "actions work"
