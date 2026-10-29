@@ -1,0 +1,58 @@
+name: Sign+Package Proof
+on: workflow_dispatch
+jobs:
+  sign:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: |
+          XC=$(ls -d /Applications/Xcode*.app | grep -vE "\.app\.app" | sort -V | tail -1)
+          sudo xcode-select -s "$XC"; xcodebuild -version
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate + Build
+        run: |
+          xcodegen generate
+          xcodebuild -project ProbeApp.xcodeproj -scheme ProbeApp -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+      - name: Create self-signed identity + entitlements
+        run: |
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout /tmp/key.pem -out /tmp/cert.pem \
+            -days 365 -subj "/CN=CI Probe Signing" 2>/dev/null
+          openssl pkcs12 -export -out /tmp/probe.p12 -inkey /tmp/key.pem -in /tmp/cert.pem \
+            -passout pass:ciprobe -legacy 2>/dev/null || \
+            openssl pkcs12 -export -out /tmp/probe.p12 -inkey /tmp/key.pem -in /tmp/cert.pem \
+            -passout pass:ciprobe 2>/dev/null
+          security import /tmp/probe.p12 -k ~/Library/Keychains/build.keychain-db \
+            -P ciprobe -T /usr/bin/codesign
+          security unlock-keychain -p ciprobe ~/Library/Keychains/build.keychain-db
+          security set-key-partition-list -S apple-tool:,apple: -s -k ciprobe ~/Library/Keychains/build.keychain-db >/dev/null
+          cat > /tmp/ent.plist <<'PL'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>application-identifier</key><string>ABCDE12345.com.saravanan.probe.ProbeApp</string>
+            <key>get-task-allow</key><false/>
+            <key>keychain-access-groups</key><array><string>ABCDE12345.*</string></array>
+          </dict></plist>
+          PL
+          echo "identity ready"
+      - name: Sign app with entitlements
+        run: |
+          APP=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
+          codesign --force --sign "CI Probe Signing" --entitlements /tmp/ent.plist \
+            --timestamp=none "$APP"
+          codesign -dv --entitlements :- "$APP" 2>&1 | head -25
+      - name: Package signed ipa and validate
+        run: |
+          APP=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
+          rm -rf Payload && mkdir -p Payload && cp -R "$APP" Payload/
+          zip -qry SignedProbe.ipa Payload
+          unzip -l SignedProbe.ipa | tail -5
+          codesign --verify --verbose=2 "$APP" && echo "CODESIGN VERIFY OK"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SignedProbe-ipa
+          path: SignedProbe.ipa
