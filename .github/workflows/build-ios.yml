@@ -1,0 +1,50 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-26-arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          ls /Applications | grep -E "^Xcode" || true
+          sudo xcode-select -s /Applications/Xcode_27.app
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Build (unsigned, generic iOS device)
+        run: |
+          xcodebuild \
+            -project ProbeApp.xcodeproj \
+            -scheme ProbeApp \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package .ipa
+        run: |
+          APP=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
+          echo "App bundle: $APP"
+          mkdir -p Payload && cp -R "$APP" Payload/
+          zip -qry ProbeApp.ipa Payload
+          ls -la ProbeApp.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ProbeApp-ipa
+          path: ProbeApp.ipa
