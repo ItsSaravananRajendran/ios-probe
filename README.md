@@ -106,18 +106,54 @@ require Developer Mode.
 
 `pymobiledevice3` is installed on the mac mini (`~/Library/Python/3.9/bin`).
 
+The phone's `lockdownd` (port 62078) IS reachable over Tailscale at
+`100.89.49.53` when the phone is awake/unlocked — but it resets every protocol
+exchange until this host is a trusted peer. Pairing routes, all tested:
+
+| Route | Result |
+|---|---|
+| `pymobiledevice3 lockdown pair` (USB) | no USB device attached |
+| `pymobiledevice3 bonjour mobdev2` / `rsd` | `[]` — mDNS does not cross Tailscale |
+| `pymobiledevice3 remote pair` | "No devices were found during bonjour browse" |
+| `pymobiledevice3 remote start-tunnel --native` | "remotepairingd reported no device" (no Apple ID signed into this Mac) |
+| `idevice_id -n` / `ideviceinfo -n` (libimobiledevice) | "No device found!" — network mode needs usbmuxd on 27015, refused |
+| port 58783 (RSD / wireless debug) | connection refused — Developer Mode is off on the phone |
+| port 27015 (usbmux over network) | connection refused |
+| ports 49152 / 49918 / 62742 | other iOS services, not RSD ("did not answer the RemoteXPC handshake") |
+
+`pymobiledevice3 doctor` states the rule: *"a device advertises one tag per
+paired host, so an unpaired host cannot recognise it however the setting is
+set."* Apple's wireless debugging is Bonjour/mDNS by design and does not route
+across networks.
+
+**The practical unlock: export a pair record from a Mac that has already
+paired with the phone** (Xcode's *Connect via network*, or any Mac that touched
+it over USB), then copy it to the mac mini. Pair records are portable — they
+carry the host cert/key, the device cert, and the root — so the receiving
+machine becomes a trusted peer of the device.
+
+On the paired Mac:
 ```bash
-export PATH="$HOME/Library/Python/3.9/bin:$PATH"
-pymobiledevice3 lockdown info                 # needs a pairing record
-pymobiledevice3 apps install ./App.ipa        # install a signed .ipa
+pymobiledevice3 lockdown save-pair-record ~/pair.plist
+# or, if it was paired over USB:
+ls /var/db/lockdown/*.plist
 ```
 
-The iPhone's `lockdownd` (port 62078) was reachable over Tailscale at
-`100.89.49.53` while the phone was awake. It sleeps, so the phone must be
-unlocked and awake for the install to land.
+Then on the mac mini:
+```bash
+export PATH="$HOME/Library/Python/3.9/bin:$PATH"
+python3 tools/install_over_network.py \
+  --host 100.89.49.53 \
+  --pair-record ~/pair.plist \
+  --ipa ./App.ipa
+```
 
-`tools/probe_transport.py` re-runs the pairing diagnostics above; pass the
-phone's tailnet IP to check the current state.
+That script loads the pair record, opens lockdown over Tailscale, and drives
+`installation_proxy.install_from_local`. On failure it prints the fix instead
+of a traceback.
+
+`tools/probe_transport.py` re-runs the pairing diagnostics; pass the phone's
+tailnet IP to check the current state.
 
 ## Troubleshooting
 
