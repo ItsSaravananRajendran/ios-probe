@@ -142,6 +142,11 @@ ls /var/db/lockdown/*.plist
 Then on the mac mini:
 ```bash
 export PATH="$HOME/Library/Python/3.9/bin:$PATH"
+
+# 1. check every prerequisite
+./tools/bootstrap_network_install.sh ~/pair.plist
+
+# 2. install
 python3 tools/install_over_network.py \
   --host 100.89.49.53 \
   --pair-record ~/pair.plist \
@@ -151,6 +156,23 @@ python3 tools/install_over_network.py \
 That script loads the pair record, opens lockdown over Tailscale, and drives
 `installation_proxy.install_from_local`. On failure it prints the fix instead
 of a traceback.
+
+`tools/bootstrap_network_install.sh` checks all three prerequisites (tailnet
+reachability, lockdownd port open, pair record validity) and reports exactly
+what is missing. `tools/pair_record_roundtrip.py` validates that a pair record
+is a portable file.
+
+**Port map of the iPhone over Tailscale** (measured by sweeping 1–65535 while
+the phone was awake): only four ports are open — 49152, 49918, 62078
+(lockdownd), 62742. Ports 1024–49151 are entirely closed; 27015 (usbmuxd
+network) and 58783 (RSD) are refused. The other three are iOS internals, not
+RSD ("did not answer the RemoteXPC handshake"). The phone **sleeps** — ports
+appear and vanish as it wakes, so re-check before concluding anything.
+
+**xtool hits the same wall**: it uses SwiftyMobileDevice's
+`DEVICE_LOOKUP_NETWORK` (usbmuxd Bonjour discovery), so `xtool devices
+--network` and `xtool install --network` cannot see an unpaired phone across
+Tailscale either. `xtool install` also requires `xtool auth` first.
 
 `tools/probe_transport.py` re-runs the pairing diagnostics; pass the phone's
 tailnet IP to check the current state.
